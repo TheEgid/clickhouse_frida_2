@@ -1,33 +1,57 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from clickhouse_client import ch
 import logging
+from tools import get_api_key_dependency
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
 @router.get("/health")
 def health_check():
     if not ch:
-        raise HTTPException(status_code=500, detail="ClickHouse client not initialized.")
+        raise HTTPException(
+            status_code=500, detail="ClickHouse client not initialized."
+        )
     try:
         ch.ping()
-        return {"status": "healthy", "clickhouse": "connected", "embedding_model": "frida"}
+        return {
+            "status": "healthy",
+            "clickhouse": "connected",
+            "embedding_model": "frida",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ClickHouse error: {e}")
 
 
-@router.get("/info")
-def get_info():
-    if not ch:
-        raise HTTPException(status_code=500, detail="ClickHouse client not initialized.")
+@router.get("/stats")
+async def get_stats(api_key: str = Depends(get_api_key_dependency)):
+    """Получение статистики по данным в таблице."""
     try:
-        result = ch.query("SELECT count(*) as count FROM rag_docs")
-        count = result.result_rows[0][0] if result.result_rows else 0
-        return {"documents_count": count, "table": "rag_docs", "embedding_model": "frida"}
+        stats_query = """
+        SELECT
+            count() as total_chunks,
+            uniqExact(id) as unique_ids,
+            min(created_at) as oldest_record,
+            max(created_at) as newest_record
+        FROM novaya
+        """
+
+        result = ch.query(stats_query)
+
+        if result.result_rows:
+            total_chunks, unique_ids, oldest, newest = result.result_rows[0]
+            return {
+                "total_chunks": total_chunks,
+                "unique_ids": unique_ids,
+                "oldest_record": oldest.isoformat() if oldest else None,
+                "newest_record": newest.isoformat() if newest else None,
+                "table": "novaya",
+            }
+        else:
+            return {"error": "No data available"}
+
     except Exception as e:
-        if "Table" in str(e) and "doesn't exist" in str(e):
-            logger.warning("Таблица 'rag_docs' еще не существует.")
-            return {"documents_count": 0, "table": "rag_docs", "embedding_model": "frida", "status": "table_not_found"}
-        logger.error(f"Ошибка при получении информации: {e}")
+        logger.exception("❌ Ошибка при получении статистики")
         raise HTTPException(status_code=500, detail=str(e))
