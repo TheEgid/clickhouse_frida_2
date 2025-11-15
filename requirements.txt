@@ -11,7 +11,5 @@ tqdm==4.67.1
 pydantic==2.12.3
 fastapi
 uvicorn
-langchain
-langchain-community
 sentence-transformers
 numpy
